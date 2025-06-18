@@ -1,3 +1,5 @@
+import requests
+
 import json
 from abc import abstractmethod
 from functools import cached_property
@@ -18,12 +20,43 @@ from immich_ml.schemas import ModelSession, ModelTask, ModelType
 class BaseCLIPTextualEncoder(InferenceModel):
     depends = []
     identity = (ModelType.TEXTUAL, ModelTask.SEARCH)
+    DEEPL_API_URL = "https://api-free.deepl.com/v2/translate"  # DeepL API 地址
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.deepl_api_key = "fe07bcee-c6a7-5fcc-4c0d-3edd06fc8165:fx"  # 配置 DeepL API 密钥
 
     def _predict(self, inputs: str, language: str | None = None, **kwargs: Any) -> str:
+         # 检测中文并翻译
+        if language == "zh" and self.contains_chinese(inputs):
+            log.debug("Translating Chinese input to English...")
+            inputs = self.translate_to_english(inputs)
         tokens = self.tokenize(inputs, language=language)
         res: NDArray[np.float32] = self.session.run(None, tokens)[0][0]
         return serialize_np_array(res)
+   
+  def contains_chinese(self, text: str) -> bool:
+        """检查文本中是否包含中文字符"""
+        return any('\u4e00' <= char <= '\u9fff' for char in text)
 
+    def translate_to_english(self, text: str) -> str:
+        """使用 DeepL API 将文本翻译为英语"""
+        try:
+            response = requests.post(
+                self.DEEPL_API_URL,
+                data={
+                    "auth_key": self.deepl_api_key,
+                    "text": text,
+                    "source_lang": "ZH",
+                    "target_lang": "EN-US",
+                },
+            )
+            response.raise_for_status()
+            return response.json()["translations"][0]["text"]
+        except Exception as e:
+            log.warning(f"Translation failed: {e}")
+            return text  # 如果翻译失败，返回原文本
+  
     def _load(self) -> ModelSession:
         session = super()._load()
         log.debug(f"Loading tokenizer for CLIP model '{self.model_name}'")
